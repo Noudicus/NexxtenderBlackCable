@@ -1,0 +1,267 @@
+substitutions:
+  device_name: nexxtender
+  friendly_name: Nexxtender
+  charging_basic_prefix: Charging
+  charging_basic_id_prefix: charging_basic
+  charging_basic_update_interval: 60s
+
+esphome:
+  name: NextenderBlackCable
+
+esp32:
+  board: wt32-eth01
+  framework:
+    type: esp-idf
+
+ota:
+  - platform: esphome
+    password: !secret esphome_admin_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+captive_portal:
+
+logger:
+
+api:
+  encryption:
+    key: !secret esphome_api_key
+  id: espapi
+  reboot_timeout: 5min
+
+esp32_ble:
+  io_capability: keyboard_only
+
+esp32_ble_tracker:
+  id: ble_tracker_id
+  scan_parameters:
+    continuous: true
+    active: true
+
+ble_client:
+  - mac_address: !secret nexxtender_mac
+    id: ${device_name}_ble_client_id
+    auto_connect: true
+    on_connect:
+      then:
+        - lambda: |-
+            ESP_LOGI("ble_client_lambda", "Connected to BLE device");
+            id(${device_name}_ble_client_id)->pair();
+            id(ble_client_connectivity).publish_state(true);
+            // id(ble_tracker_id).stop_scan();
+            
+    on_disconnect:
+      then:
+        - lambda: |-
+            ESP_LOGI("ble_client_lambda", "Disconnected from BLE device");
+            // id(ble_tracker_id).start_scan();
+            id(ble_client_connectivity).publish_state(false);
+        - ble_client.remove_bond:
+            id: ${device_name}_ble_client_id
+    on_passkey_notification:
+      then:
+        - logger.log:
+            format: "Enter this passkey on your BLE device: %06d"
+            args: [passkey]
+    on_passkey_request:
+      then:
+        - logger.log: "Authenticating with passkey"
+        - ble_client.passkey_reply:
+            id: ${device_name}_ble_client_id
+            passkey: !secret nexxtender_passkey
+
+# Example configuration entry
+button:
+  - platform: restart
+    name: "Restart"
+switch:
+  - platform: ble_client
+    ble_client_id: ${device_name}_ble_client_id
+    name: "Enable iTag"
+
+binary_sensor:
+  - platform: template
+    name: BLE Client
+    id: ble_client_connectivity
+    publish_initial_state: true
+    device_class: connectivity
+    icon: mdi:check-network-outline
+    entity_category: diagnostic
+
+globals:
+  - id: g_${charging_basic_id_prefix}_seconds
+    type: int
+    restore_value: true
+  - id: g_${charging_basic_id_prefix}_energy
+    type: int
+    restore_value: true
+  - id: g_${charging_basic_id_prefix}_phase_count
+    type: int
+  - id: g_${charging_basic_id_prefix}_discriminator
+    type: std::string
+  - id: g_${charging_basic_id_prefix}_status
+    type: std::string
+  - id: g_${charging_basic_id_prefix}_status_id
+    type: int
+
+sensor:
+  - platform: template
+    name: "${charging_basic_prefix} Seconds"
+    id: ${charging_basic_id_prefix}_seconds
+    icon: mdi:timelapse
+    device_class: duration
+    unit_of_measurement: s
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: ${charging_basic_update_interval}
+    lambda: |-
+      return id(g_${charging_basic_id_prefix}_seconds);
+  - platform: template
+    name: "Energy"
+    id: ${charging_basic_id_prefix}_energy
+    icon: mdi:flash
+    device_class: energy
+    unit_of_measurement: kWh
+    state_class: total_increasing
+    accuracy_decimals: 2
+    filters:
+      - lambda: return x / 1000;
+    update_interval: ${charging_basic_update_interval}
+    lambda: |-
+        return id(g_${charging_basic_id_prefix}_energy);
+  - platform: template
+    name: "Charging Phase Count"
+    id: ${charging_basic_id_prefix}_phase_count
+    icon: mdi:counter
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: ${charging_basic_update_interval}
+    lambda: |-
+      return id(g_${charging_basic_id_prefix}_phase_count);
+
+text_sensor:
+  - platform: ble_client
+    id: device_information_device_name
+    name: "Device name"
+    icon: mdi:numeric
+    entity_category: diagnostic
+    ble_client_id: ${device_name}_ble_client_id
+    service_uuid: '1800'
+    characteristic_uuid: '2a00'
+  - platform: ble_client
+    id: device_information_model_number
+    name: "Model Number"
+    icon: mdi:numeric
+    entity_category: diagnostic
+    ble_client_id: ${device_name}_ble_client_id
+    service_uuid: 180a
+    characteristic_uuid: 2a24
+  - platform: ble_client
+    id: device_information_serial_number
+    name: "Serial Number"
+    icon: mdi:numeric
+    entity_category: diagnostic
+    ble_client_id: ${device_name}_ble_client_id
+    service_uuid: 180a
+    characteristic_uuid: 2a25
+  - platform: ble_client
+    id: device_information_firmware_revision
+    name: "Firmware Revision"
+    icon: mdi:file-certificate
+    entity_category: diagnostic
+    ble_client_id: ${device_name}_ble_client_id
+    service_uuid: 180a
+    characteristic_uuid: 2a26
+  - platform: ble_client
+    id: device_information_hardware_revision
+    name: "Hardware Revision"
+    icon: mdi:file-certificate
+    entity_category: diagnostic
+    ble_client_id: ${device_name}_ble_client_id
+    service_uuid: 180a
+    characteristic_uuid: 2a27
+  - platform: template
+    name: "Discriminator"
+    id: ${charging_basic_id_prefix}_discriminator
+    icon: mdi:battery-charging-100
+    update_interval: ${charging_basic_update_interval}
+    lambda: |-
+      return id(g_${charging_basic_id_prefix}_discriminator);
+  - platform: template
+    name: "Status"
+    id: ${charging_basic_id_prefix}_status
+    icon: mdi:ev-station
+    update_interval: ${charging_basic_update_interval}
+    lambda: |-
+      return id(g_${charging_basic_id_prefix}_status);
+  - platform: ble_client
+    id: ${device_name}_charging_basic_data
+    internal: true
+    ble_client_id: ${device_name}_ble_client_id
+    service_uuid: fd47416a-95fb-4206-88b5-b4a8045f75ce
+    characteristic_uuid: fd47416a-95fb-4206-88b5-b4a8045f75cf
+    notify: true
+    on_notify:
+      then:
+        lambda: |-
+          if (x.empty()) { return; }
+          ESP_LOGI("ble_client_lambda", "Data Received");
+
+          // Declare variables outside the switch-case block
+          String value_string;
+          int value;
+
+          id(g_${charging_basic_id_prefix}_seconds) = (int16_t(x[1]) << 8) | int16_t(x[0]);
+
+          // Publish the discriminator state
+          switch (x[2] & 0xFF) {
+              case 1:
+                  value_string = "Started";
+                  break;
+              case 2:
+                  value_string = "Charging";
+                  break;
+              case 3:
+                  value_string = "Stopped";
+                  break;
+              default:
+                  value_string = "Unknown";
+          }
+          id(g_${charging_basic_id_prefix}_discriminator) = value_string.c_str();
+          id(${charging_basic_id_prefix}_discriminator).publish_state(value_string.c_str());
+
+          switch (static_cast<char>(x[3] & 0xFF)) {
+              case 'B':
+                  value_string = "Plugged";
+                  value = 1;
+                  break;
+              case 'C':
+              case 'D':
+                  value_string = "Charging";
+                  value = 2;
+                  break;
+              case 'E':
+                  value_string = "Fault";
+                  value = 3;
+                  break;
+              default:
+                  value_string = "Unplugged";
+                  value = 4;
+                  break;
+          }
+          id(g_${charging_basic_id_prefix}_status_id) = value;
+          id(g_${charging_basic_id_prefix}_status) = value_string.c_str();
+          id(${charging_basic_id_prefix}_status).publish_state(value_string.c_str());
+
+          value = (uint32_t(x[11]) << 24) | (uint32_t(x[10]) << 16) | (uint32_t(x[9]) << 8) | uint32_t(x[8]);
+          //when we detect the previous value is smaller then the measured we send a value zero tor reset the energymeasurement in homeassistant
+          if (value < id(g_${charging_basic_id_prefix}_energy))
+            id(g_${charging_basic_id_prefix}_energy) = 0;
+          else
+            id(g_${charging_basic_id_prefix}_energy) = value;
+
+          value = x[13] & 0xFF;
+          id(g_${charging_basic_id_prefix}_phase_count) = value;
+          id(${charging_basic_id_prefix}_phase_count).publish_state(value);
